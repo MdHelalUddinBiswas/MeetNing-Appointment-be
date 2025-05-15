@@ -86,13 +86,13 @@ async function initDatabase() {
 // Auth Middleware
 const authenticateToken = (req, res, next) => {
   // Get token from header - support multiple formats
-  let token = req.header('x-auth-token');
-  
+  let token = req.header("x-auth-token");
+
   // Also check for Authorization header with Bearer token
-  const authHeader = req.header('Authorization');
-  if (!token && authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.split(' ')[1];
-    console.log('Using bearer token:', token.substring(0, 10) + '...');
+  const authHeader = req.header("Authorization");
+  if (!token && authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+    console.log("Using bearer token:", token.substring(0, 10) + "...");
   }
 
   if (!token) {
@@ -278,8 +278,10 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
   console.log("Appointment creation request:", req.body);
 
   try {
-    const {
-      id,
+    // Get user ID from the authenticated token instead of request body
+    const user_id = req.user.id;
+    
+    const { 
       title,
       description,
       start_time,
@@ -328,14 +330,14 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
        RETURNING *`,
       [
-        id,
+        user_id, // Using authenticated user_id instead of request body id
         title,
         description,
         start_time,
         end_time,
         location,
         participantsJson,
-        status || "upcoming",
+        status || "upcoming"
       ]
     );
 
@@ -558,228 +560,12 @@ app.get("/api/calendars", authenticateToken, async (req, res) => {
 
 // Create a Google Meet link
 // Import routes
-const integrationRoutes = require('./routes/integration.routes');
-const meetingRoutes = require('./routes/meeting.routes');
+const integrationRoutes = require("./routes/integration.routes");
+const meetingRoutes = require("./routes/meeting.routes");
 
 // Apply integration and meeting routes
-app.use('/api/integration', integrationRoutes);
-app.use('/api/meetings', meetingRoutes);
-
-// Keep existing Google Meet endpoint for backward compatibility
-app.post("/api/google-meet", async (req, res) => {
-  try {
-    const { accessToken, eventDetails } = req.body;
-
-    if (!accessToken) {
-      return res.status(401).json({ error: "No access token provided" });
-    }
-
-    // Log the received event details for debugging
-    console.log(
-      "Event details received:",
-      JSON.stringify(eventDetails, null, 2)
-    );
-
-    // Extract start and end times from the event details
-    // The frontend sends nested objects, handle both formats
-    let startDateTime, endDateTime, timeZone;
-
-    if (eventDetails.start && eventDetails.start.dateTime) {
-      // Handle nested format from frontend
-      startDateTime = eventDetails.start.dateTime;
-      endDateTime = eventDetails.end?.dateTime;
-      timeZone = eventDetails.start.timeZone || "UTC";
-    } else if (eventDetails.startTime) {
-      // Handle flat format
-      startDateTime = eventDetails.startTime;
-      endDateTime = eventDetails.endTime;
-      timeZone = eventDetails.timezone || "UTC";
-    } else {
-      return res
-        .status(400)
-        .json({ error: "Missing start/end time information" });
-    }
-
-    // Ensure we have valid ISO format dates for both start and end
-    if (!startDateTime || !endDateTime) {
-      return res.status(400).json({ error: "Invalid start or end time" });
-    }
-
-    // Get other event details
-    const summary = eventDetails.summary || eventDetails.title || "New Meeting";
-    const description =
-      eventDetails.description || "Meeting created via MeetNing";
-
-    // Extract attendees, handling different formats
-    let attendees = [];
-    if (eventDetails.attendees && Array.isArray(eventDetails.attendees)) {
-      attendees = eventDetails.attendees;
-    } else if (
-      eventDetails.participants &&
-      Array.isArray(eventDetails.participants)
-    ) {
-      attendees = eventDetails.participants.map((email) => ({ email }));
-    }
-
-    console.log("Preparing to create event with:", {
-      summary,
-      startDateTime,
-      endDateTime,
-      timeZone,
-      attendees: attendees.length,
-    });
-
-    // Make request to Google Calendar API to create an event with conferencing
-    const response = await axios({
-      method: "POST",
-      url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      data: {
-        summary,
-        description,
-        start: {
-          dateTime: startDateTime,
-          timeZone,
-        },
-        end: {
-          dateTime: endDateTime,
-          timeZone,
-        },
-        conferenceData: {
-          createRequest: {
-            requestId: `meeting-${Date.now()}`,
-            conferenceSolutionKey: {
-              type: "hangoutsMeet",
-            },
-          },
-        },
-        attendees: attendees.length > 0 ? attendees : [],
-      },
-      params: {
-        conferenceDataVersion: 1,
-      },
-    });
-
-    // Log response data for debugging
-    console.log(
-      "Google Calendar API response:",
-      JSON.stringify(response.data, null, 2)
-    );
-
-    // Extract the Google Meet link
-    const meetLink =
-      response.data.hangoutLink ||
-      (response.data.conferenceData &&
-        response.data.conferenceData.entryPoints &&
-        response.data.conferenceData.entryPoints.find((e) => e.uri).uri);
-
-    if (!meetLink) {
-      return res
-        .status(400)
-        .json({ error: "Failed to create Google Meet link" });
-    }
-
-    // Return the meet link
-    return res.status(200).json({
-      meetLink,
-      eventId: response.data.id,
-    });
-  } catch (error) {
-    console.error(
-      "Google Meet creation error:",
-      error.response ? error.response.data : error.message
-    );
-    return res.status(500).json({
-      error: "Failed to create Google Meet",
-      details: error.response ? error.response.data : error.message,
-    });
-  }
-});
-
-// Utility function to generate realistic Google Meet links
-function generateMockMeetLink(prefix = "") {
-  // Generate a random meeting ID similar to Google Meet format
-  const chars = "abcdefghijklmnopqrstuvwxyz";
-  const randomChar = () => chars[Math.floor(Math.random() * chars.length)];
-
-  // Create segments (3 chars - 4 chars - 3 chars)
-  const segment1 = Array(3).fill(0).map(randomChar).join("");
-  const segment2 = Array(4).fill(0).map(randomChar).join("");
-  const segment3 = Array(3).fill(0).map(randomChar).join("");
-
-  return {
-    meetLink: `https://meet.google.com/${segment1}-${segment2}-${segment3}`,
-    eventId: `mock-event-${Date.now()}`,
-  };
-}
-
-// Endpoint to generate Google Meet links without OAuth (works in all browsers)
-app.post("/api/dev/google-meet", async (req, res) => {
-  try {
-    const { title, description, start_time, end_time, participants } = req.body;
-
-    // Validate required fields
-    if (!start_time || !end_time) {
-      return res.status(400).json({
-        error: "Missing required fields: start_time and end_time are required",
-      });
-    }
-
-    // Log the event details for reference
-    console.log("Creating event with:", {
-      title,
-      start_time,
-      end_time,
-      participants: Array.isArray(participants) ? participants.length : "none",
-    });
-
-    // Generate a realistic Google Meet link that works in all browsers
-    const result = generateMockMeetLink();
-
-    res.json(result);
-  } catch (error) {
-    console.error("Error creating Google Meet with service account:", error);
-    res.status(500).json({
-      error: "Failed to create Google Meet link",
-      details: error.message,
-    });
-  }
-});
-
-// Development endpoint to generate mock Google Meet links without OAuth
-app.post("/api/dev/google-meet", async (req, res) => {
-  try {
-    // Generate a random meeting ID (similar to Google Meet format)
-    const chars = "abcdefghijklmnopqrstuvwxyz";
-    const meetingId = Array(3)
-      .fill(0)
-      .map(() =>
-        Array(3)
-          .fill(0)
-          .map(() => chars[Math.floor(Math.random() * chars.length)])
-          .join("")
-      )
-      .join("-");
-
-    const meetLink = `https://meet.google.com/${meetingId}`;
-
-    console.log("Generated mock Google Meet link:", meetLink);
-
-    // Return a similar structure to the real endpoint
-    res.json({
-      meetLink,
-      eventId: `mock-event-${Date.now()}`,
-    });
-  } catch (error) {
-    console.error("Error generating mock Meet link:", error);
-    res.status(500).json({
-      error: "Failed to generate Meet link",
-    });
-  }
-});
+app.use("/api/integration", integrationRoutes);
+app.use("/api/meetings", meetingRoutes);
 
 // Start server and initialize database
 app.listen(port, async () => {
