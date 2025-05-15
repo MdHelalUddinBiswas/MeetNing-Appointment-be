@@ -7,33 +7,63 @@ const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
-const port = 8000;
+const port = process.env.PORT || 8000;
 
 // Middleware
+// Determine allowed origins based on environment
+const allowedOrigins = [
+  'http://localhost:3000',                            // Local frontend
+  'http://localhost:8000',                            // Local backend
+  'https://meet-ning-appointment-fe-2bci.vercel.app', // Production frontend
+  'https://meet-ning-appointment-be.vercel.app'       // Production backend
+];
+
+// CORS configuration
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://meet-ning-appointment-fe-2bci.vercel.app', '*'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl, etc)
+    if (!origin) return callback(null, true);
+    
+    // Check if the origin is in the allowed list
+    if (allowedOrigins.indexOf(origin) === -1) {
+      console.log('CORS request from unauthorized origin:', origin);
+      // For security in production, you might want to restrict this
+      // For now allowing all origins for easier development and testing
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
 // PostgreSQL connection setup
-const pool = new Pool(
-  process.env.DATABASE_URL
-    ? {
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-          rejectUnauthorized: false,
-        },
-      }
-    : {
-        user: process.env.DB_USER || "postgres",
-        host: process.env.DB_HOST || "localhost",
-        database: process.env.DB_NAME || "appointment_ai",
-        password: process.env.DB_PASSWORD || "postgres",
-        port: process.env.DB_PORT || 5432,
-      }
-);
+let poolConfig;
+
+if (process.env.DATABASE_URL) {
+  // For production (Neon, Supabase, etc)
+  poolConfig = {
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: false,
+    },
+  };
+  console.log('Using production database connection');
+} else {
+  // For local development
+  poolConfig = {
+    user: process.env.DB_USER || "postgres",
+    host: process.env.DB_HOST || "localhost",
+    database: process.env.DB_NAME || "appointment_ai",
+    password: process.env.DB_PASSWORD || "postgres",
+    port: process.env.DB_PORT || 5432,
+  };
+  console.log('Using local database connection');
+}
+
+const pool = new Pool(poolConfig);
 
 // Test PostgreSQL connection
 pool.query("SELECT NOW()", (err, res) => {
@@ -125,6 +155,22 @@ const authenticateToken = (req, res, next) => {
 };
 
 // Routes
+
+// Define API routes
+
+// Test route for checking deployment status
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    message: "MeetNing Appointment AI API is running",
+    environment: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get("/api", (req, res) => {
+  res.json({ message: "Welcome to the MeetNing Appointment AI API" });
+});
 
 // Home route
 app.get("/", (req, res) => {
