@@ -14,13 +14,22 @@ app.use(cors());
 app.use(express.json());
 
 // PostgreSQL connection setup
-const pool = new Pool({
-  user: process.env.DB_USER || "postgres",
-  host: process.env.DB_HOST || "localhost",
-  database: process.env.DB_NAME || "appointment_ai",
-  password: process.env.DB_PASSWORD || "postgres",
-  port: process.env.DB_PORT || 5432,
-});
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? {
+        connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false,
+        },
+      }
+    : {
+        user: process.env.DB_USER || "postgres",
+        host: process.env.DB_HOST || "localhost",
+        database: process.env.DB_NAME || "appointment_ai",
+        password: process.env.DB_PASSWORD || "postgres",
+        port: process.env.DB_PORT || 5432,
+      }
+);
 
 // Test PostgreSQL connection
 pool.query("SELECT NOW()", (err, res) => {
@@ -280,8 +289,10 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
   try {
     // Get user ID from the authenticated token instead of request body
     const user_id = req.user.id;
-    
-    const { 
+    const email = req.user.email || "user@example.com";
+    const name = req.user.name || "User";
+
+    const {
       title,
       description,
       start_time,
@@ -302,27 +313,66 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
     let participantsJson = null;
 
     if (participants) {
+      // Always ensure participants is an array of objects with email property
+      let participantsArray;
+
       // Check if it's already an array
       if (Array.isArray(participants)) {
-        participantsJson = JSON.stringify(participants);
+        // Convert any string elements to objects with email property
+        participantsArray = participants.map((item) => {
+          if (typeof item === "string") {
+            return { email: item };
+          } else if (typeof item === "object" && item.email) {
+            // If it's already an object with email, only keep the email field
+            return { email: item.email };
+          } else {
+            // Fallback for unexpected formats
+            return { email: String(item) };
+          }
+        });
       }
       // If it's a string (comma-separated emails)
       else if (typeof participants === "string") {
         // Convert comma-separated string to array of objects with email property
-        const participantsArray = participants
+        participantsArray = participants
           .split(",")
           .map((email) => email.trim())
           .filter((email) => email.length > 0)
           .map((email) => ({ email }));
-
-        participantsJson = JSON.stringify(participantsArray);
       } else {
         // Handle case where it might be a single object or something else
-        participantsJson = JSON.stringify([{ email: participants.toString() }]);
+        participantsArray = [
+          {
+            email: participants.toString(),
+          },
+        ];
       }
+
+      participantsJson = JSON.stringify(participantsArray);
     }
 
     console.log("Processed participants:", participantsJson);
+
+    // Check if user exists in the database
+    const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [
+      user_id,
+    ]);
+
+    // If user doesn't exist, create a default user record
+    if (userCheck.rows.length === 0) {
+      console.log(
+        `User ${user_id} doesn't exist in database. Creating default user record.`
+      );
+
+      // Generate a secure hashed password for the default user
+      const defaultPassword = await bcrypt.hash("defaultPassword123", 10);
+
+      // Insert a basic user record to satisfy the foreign key constraint with all required fields
+      await pool.query(
+        "INSERT INTO users (id, email, name, password, created_at) VALUES ($1, $2, $3, $4, NOW())",
+        [user_id, email, name, defaultPassword]
+      );
+    }
 
     const result = await pool.query(
       `INSERT INTO appointments 
@@ -337,13 +387,21 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
         end_time,
         location,
         participantsJson,
-        status || "upcoming"
+        status || "upcoming",
       ]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error("Create appointment error:", error);
+    // Provide more helpful error message based on error type
+    if (error.code === "23503") {
+      // Foreign key violation
+      return res.status(400).json({
+        message:
+          "User doesn't exist in the database. Please try again or contact support.",
+      });
+    }
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -374,8 +432,48 @@ app.put("/api/appointments/:id", authenticateToken, async (req, res) => {
         .json({ message: "Appointment not found or unauthorized" });
     }
 
-    // Convert participants array to JSON string if it exists
-    const participantsJson = participants ? JSON.stringify(participants) : null;
+    // Process participants data to ensure it's an array of objects
+    let participantsJson = null;
+
+    if (participants) {
+      // Always ensure participants is an array of objects with email property
+      let participantsArray;
+
+      // Check if it's already an array
+      if (Array.isArray(participants)) {
+        // Convert any string elements to objects with email property
+        participantsArray = participants.map((item) => {
+          if (typeof item === "string") {
+            return { email: item };
+          } else if (typeof item === "object" && item.email) {
+            // If it's already an object with email, only keep the email field
+            return { email: item.email };
+          } else {
+            // Fallback for unexpected formats
+            return { email: String(item) };
+          }
+        });
+      }
+      // If it's a string (comma-separated emails)
+      else if (typeof participants === "string") {
+        // Convert comma-separated string to array of objects with email property
+        participantsArray = participants
+          .split(",")
+          .map((email) => email.trim())
+          .filter((email) => email.length > 0)
+          .map((email) => ({ email }));
+      } else {
+        // Handle case where it might be a single object or something else
+        participantsArray = [
+          {
+            email: participants.toString(),
+          },
+        ];
+      }
+
+      participantsJson = JSON.stringify(participantsArray);
+      console.log("Processed participants for update:", participantsJson);
+    }
 
     // Build update query dynamically based on provided fields
     let updateFields = [];
