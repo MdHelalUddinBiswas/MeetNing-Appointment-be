@@ -52,9 +52,10 @@ try {
         rejectUnauthorized: false,
       },
       // Add connection limits appropriate for serverless
-      max: 10,                 // Maximum number of clients in the pool
+      max: 5,                   // Maximum number of clients in the pool (lower for serverless)
       idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
-      connectionTimeoutMillis: 5000 // How long to wait for a connection
+      connectionTimeoutMillis: 10000, // Increased timeout for connection
+      statement_timeout: 10000  // Timeout for statements
     };
     console.log('Using production database connection with URL:', 
       process.env.DATABASE_URL ? 
@@ -182,14 +183,61 @@ const authenticateToken = (req, res, next) => {
 
 // Define API routes
 
-// Test route for checking deployment status
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "ok", 
-    message: "MeetNing Appointment AI API is running",
-    environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString()
-  });
+// Enhanced health endpoint for better diagnostics
+app.get("/api/health", async (req, res) => {
+  let dbStatus = "unknown";
+  let dbError = null;
+  
+  // Test database connection
+  try {
+    const dbResult = await pool.query("SELECT NOW() as time").timeout(5000);
+    dbStatus = "connected";
+    
+    // Return comprehensive health information
+    res.json({ 
+      status: "ok", 
+      message: "MeetNing Appointment AI API is running",
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        status: dbStatus,
+        time: dbResult.rows[0]?.time || new Date().toISOString()
+      },
+      server: {
+        timestamp: new Date().toISOString(),
+        nodejs: process.version,
+        memory: process.memoryUsage().heapUsed / 1024 / 1024 + ' MB'
+      },
+      config: {
+        database_url_set: !!process.env.DATABASE_URL,
+        jwt_secret_set: !!process.env.JWT_SECRET,
+        port: process.env.PORT || 8000
+      }
+    });
+  } catch (error) {
+    dbStatus = "error";
+    dbError = error.message;
+    
+    // Still return a 200 status but include error info
+    res.json({ 
+      status: "warning", 
+      message: "API is running but database connection has issues",
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        status: dbStatus,
+        error: dbError
+      },
+      server: {
+        timestamp: new Date().toISOString(),
+        nodejs: process.version,
+        memory: process.memoryUsage().heapUsed / 1024 / 1024 + ' MB'
+      },
+      config: {
+        database_url_set: !!process.env.DATABASE_URL,
+        jwt_secret_set: !!process.env.JWT_SECRET,
+        port: process.env.PORT || 8000
+      }
+    });
+  }
 });
 
 app.get("/api", (req, res) => {
