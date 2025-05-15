@@ -41,29 +41,53 @@ app.use(express.json());
 
 // PostgreSQL connection setup
 let poolConfig;
+let pool;
 
-if (process.env.DATABASE_URL) {
-  // For production (Neon, Supabase, etc)
-  poolConfig = {
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-      rejectUnauthorized: false,
-    },
+try {
+  if (process.env.DATABASE_URL) {
+    // For production (Neon, Supabase, etc)
+    poolConfig = {
+      connectionString: process.env.DATABASE_URL,
+      ssl: {
+        rejectUnauthorized: false,
+      },
+      // Add connection limits appropriate for serverless
+      max: 10,                 // Maximum number of clients in the pool
+      idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
+      connectionTimeoutMillis: 5000 // How long to wait for a connection
+    };
+    console.log('Using production database connection with URL:', 
+      process.env.DATABASE_URL ? 
+      process.env.DATABASE_URL.substring(0, process.env.DATABASE_URL.indexOf('@')) + '...' : 
+      'undefined');
+  } else {
+    // For local development
+    poolConfig = {
+      user: process.env.DB_USER || "postgres",
+      host: process.env.DB_HOST || "localhost",
+      database: process.env.DB_NAME || "appointment_ai",
+      password: process.env.DB_PASSWORD || "postgres",
+      port: process.env.DB_PORT || 5432,
+    };
+    console.log('Using local database connection');
+  }
+
+  // Create the pool
+  pool = new Pool(poolConfig);
+  
+  // Add error handler
+  pool.on('error', (err) => {
+    console.error('Unexpected error on idle client', err);
+  });
+  
+} catch (error) {
+  console.error('Failed to initialize database pool:', error);
+  // Create an empty pool to avoid crashes
+  pool = {
+    query: () => Promise.reject(new Error('Database connection not available')),
+    on: () => {}
   };
-  console.log('Using production database connection');
-} else {
-  // For local development
-  poolConfig = {
-    user: process.env.DB_USER || "postgres",
-    host: process.env.DB_HOST || "localhost",
-    database: process.env.DB_NAME || "appointment_ai",
-    password: process.env.DB_PASSWORD || "postgres",
-    port: process.env.DB_PORT || 5432,
-  };
-  console.log('Using local database connection');
 }
-
-const pool = new Pool(poolConfig);
 
 // Test PostgreSQL connection
 pool.query("SELECT NOW()", (err, res) => {
@@ -707,23 +731,54 @@ app.get("/api/calendars", authenticateToken, async (req, res) => {
 });
 
 // Create a Google Meet link
-// Import routes
-const integrationRoutes = require("./routes/integration.routes");
-const meetingRoutes = require("./routes/meeting.routes");
+// Import routes with error handling
+let integrationRoutes;
+let meetingRoutes;
 
-// Apply integration and meeting routes
-app.use("/api/integration", integrationRoutes);
-app.use("/api/meetings", meetingRoutes);
+try {
+  integrationRoutes = require("./routes/integration.routes");
+  // Apply integration routes if available
+  app.use("/api/integration", integrationRoutes);
+  console.log('Integration routes loaded successfully');
+} catch (error) {
+  console.log('Integration routes not available:', error.message);
+  // Fallback route for integration endpoints
+  app.use("/api/integration", (req, res) => {
+    res.status(501).json({ message: "Integration functionality not available" });
+  });
+}
+
+try {
+  meetingRoutes = require("./routes/meeting.routes");
+  // Apply meeting routes if available
+  app.use("/api/meetings", meetingRoutes);
+  console.log('Meeting routes loaded successfully');
+} catch (error) {
+  console.log('Meeting routes not available:', error.message);
+  // Fallback route for meeting endpoints
+  app.use("/api/meetings", (req, res) => {
+    res.status(501).json({ message: "Meeting functionality not available" });
+  });
+}
 
 // Initialize database on startup
-(async () => {
+async function safeInitDatabase() {
   try {
+    if (!pool.query || typeof pool.query !== 'function') {
+      console.error('Database pool not properly initialized, skipping table creation');
+      return;
+    }
+    
     await initDatabase();
     console.log('Database tables initialized successfully');
   } catch (error) {
     console.error('Failed to initialize database:', error);
+    // Don't crash the server if database initialization fails
   }
-})();
+}
+
+// Call initialization with a small delay to ensure everything is loaded
+setTimeout(safeInitDatabase, 1000);
 
 // For local development
 if (process.env.NODE_ENV !== 'production') {
