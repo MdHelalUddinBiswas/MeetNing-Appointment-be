@@ -715,8 +715,22 @@ const meetingRoutes = require("./routes/meeting.routes");
 app.use("/api/integration", integrationRoutes);
 app.use("/api/meetings", meetingRoutes);
 
-// Start server and initialize database
-app.listen(port, async () => {
-  console.log(`MeetNing Appointment AI API listening on port ${port}`);
-  await initDatabase();
-});
+// Initialize database on startup
+(async () => {
+  try {
+    await initDatabase();
+    console.log('Database tables initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+  }
+})();
+
+// For local development
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(port, () => {
+    console.log(`MeetNing Appointment AI API listening on port ${port}`);
+  });
+}
+
+// Export the Express app for serverless environments
+module.exports = app;
