@@ -4,7 +4,6 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 require("dotenv").config();
-
 const app = express();
 const port = process.env.PORT || 8000;
 
@@ -23,16 +22,6 @@ if (process.env.DATABASE_URL) {
     },
   };
   console.log("Using production database connection");
-} else {
-  // For local development
-  poolConfig = {
-    user: process.env.DB_USER || "postgres",
-    host: process.env.DB_HOST || "localhost",
-    database: process.env.DB_NAME || "appointment_ai",
-    password: process.env.DB_PASSWORD || "postgres",
-    port: process.env.DB_PORT || 5432,
-  };
-  console.log("Using local database connection");
 }
 
 const pool = new Pool(poolConfig);
