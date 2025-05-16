@@ -15,9 +15,6 @@ const allowedOrigins = [
   "http://localhost:8000", // Local backend
   "https://meet-ning-appointment-fe-2bci.vercel.app", // Production frontend
   "https://meet-ning-appointment-be.vercel.app", // Production backend
-  "https://meet-ning-appointment-fe.vercel.app", // Production frontend (alternate)
-  "https://meet-ning-fe.vercel.app", // Short domain if used
-  "https://meetning.vercel.app" // Short domain if used
 ];
 
 // CORS configuration
@@ -71,22 +68,13 @@ const pool = new Pool(poolConfig);
 
 // Test PostgreSQL connection - wrap in try/catch to prevent crashing
 try {
-  pool.query("SELECT NOW()", (err, res) => {
-    if (err) {
-      console.error("Database connection error:", err.stack);
-      console.error("Database connection details (sanitized):", {
-        host: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_HOST || "localhost",
-        database: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_NAME || "appointment_ai",
-        port: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_PORT || 5432,
-        ssl: process.env.DATABASE_URL ? true : false
-      });
-    } else {
-      console.log("Database connected at:", res.rows[0].now);
-    }
-  });
-} catch (error) {
-  console.error("Failed to initiate database connection test:", error.message);
-}
+pool.query("SELECT NOW()", (err, res) => {
+  if (err) {
+    console.error("Database connection error:", err.stack);
+  } else {
+    console.log("Database connected at:", res.rows[0].now);
+  }
+});
 
 // Initialize database tables
 async function initDatabase() {
@@ -729,29 +717,8 @@ const meetingRoutes = require("./routes/meeting.routes");
 app.use("/api/integration", integrationRoutes);
 app.use("/api/meetings", meetingRoutes);
 
-// Global error handling middleware - should be placed after all routes
-app.use((err, req, res, next) => {
-  console.error('Global error handler caught:', err);
-  res.status(500).json({
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'production' ? 'Server error' : err.message
-  });
+// Start server and initialize database
+app.listen(port, async () => {
+  console.log(`MeetNing Appointment AI API listening on port ${port}`);
+  await initDatabase();
 });
-
-// Simple route to verify the API is working without database
-app.get('/api/ping', (req, res) => {
-  res.json({ message: 'pong', time: new Date().toISOString() });
-});
-
-// For Vercel serverless environment
-if (process.env.VERCEL) {
-  // Export the app for serverless use
-  console.log('Exporting Express app for Vercel serverless deployment');
-  module.exports = app;
-} else {
-  // For traditional server environments
-  app.listen(port, async () => {
-    console.log(`MeetNing Appointment AI API listening on port ${port}`);
-    await initDatabase();
-  });
-}
