@@ -8,36 +8,7 @@ require("dotenv").config();
 const app = express();
 const port = process.env.PORT || 8000;
 
-// Middleware
-// Determine allowed origins based on environment
-const allowedOrigins = [
-  "http://localhost:3000", // Local frontend
-  "http://localhost:8000", // Local backend
-  "https://meet-ning-appointment-fe-2bci.vercel.app", // Production frontend
-  "https://meet-ning-appointment-be.vercel.app", // Production backend
-];
-
-// CORS configuration
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps, curl, etc)
-      if (!origin) return callback(null, true);
-
-      // Check if the origin is in the allowed list
-      if (allowedOrigins.indexOf(origin) === -1) {
-        console.log("CORS request from unauthorized origin:", origin);
-        // For security in production, you might want to restrict this
-        // For now allowing all origins for easier development and testing
-        return callback(null, true);
-      }
-      return callback(null, true);
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-auth-token"],
-  })
-);
+app.use(cors());
 app.use(express.json());
 
 // PostgreSQL connection setup
@@ -159,10 +130,6 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// Routes
-
-// Define API routes
-
 // Test route for checking deployment status
 app.get("/api/health", (req, res) => {
   res.json({
@@ -188,7 +155,6 @@ app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, email, password, timezone } = req.body;
 
-    // Check if user already exists
     const userCheck = await pool.query("SELECT * FROM users WHERE email = $1", [
       email,
     ]);
@@ -196,7 +162,6 @@ app.post("/api/auth/signup", async (req, res) => {
       return res.status(400).json({ message: "User already exists" });
     }
 
-    // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -339,8 +304,6 @@ app.get("/api/appointments/:id", authenticateToken, async (req, res) => {
 
 // Create a new appointment
 app.post("/api/appointments", authenticateToken, async (req, res) => {
-  console.log("Appointment creation request:", req.body);
-
   try {
     // Get user ID from the authenticated token instead of request body
     const user_id = req.user.id;
@@ -720,20 +683,8 @@ const meetingRoutes = require("./routes/meeting.routes");
 app.use("/api/integration", integrationRoutes);
 app.use("/api/meetings", meetingRoutes);
 
-// Check if running in serverless Vercel environment
-if (process.env.VERCEL) {
-  // For Vercel serverless - export the app
-  console.log('Exporting Express app for Vercel serverless deployment');
-  
-  // For serverless, initialize database on cold start
-  initDatabase().catch(err => console.error('Database initialization error in serverless:', err));
-  
-  // Export app for serverless
-  module.exports = app;
-} else {
-  // Start server and initialize database for traditional environment
-  app.listen(port, async () => {
-    console.log(`MeetNing Appointment AI API listening on port ${port}`);
-    await initDatabase();
-  });
-}
+// Start server and initialize database
+app.listen(port, async () => {
+  console.log(`MeetNing Appointment AI API listening on port ${port}`);
+  await initDatabase();
+});
