@@ -7,17 +7,16 @@
     }
   ],
   "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.js"
-    }
+    { "src": "(.*)", "dest": "index.js" },
+    { "src": "/api/(.*)", "dest": "/index.js" }
   ],
+  "build": {
+    "env": {
+      "NODE_ENV": "production"
+    }
+  },
   "env": {
-    "VERCEL": "true",
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "PORT": "8080"
   }
 }
