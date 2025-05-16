@@ -72,7 +72,24 @@ let pool;
 function getPool() {
   if (!pool) {
     console.log('Creating new database connection pool');
-    pool = new Pool(poolConfig);
+    try {
+      pool = new Pool(poolConfig);
+      
+      // Add event handlers for connection issues
+      pool.on('error', (err) => {
+        console.error('Unexpected database error:', err);
+        // Don't crash the server on connection errors
+      });
+    } catch (error) {
+      console.error('Failed to create pool:', error);
+      // Return a mock pool that logs errors instead of crashing
+      return {
+        query: async (...args) => {
+          console.error('DB Error: Pool creation failed, query attempted:', args[0]);
+          throw new Error('Database connection failed');
+        }
+      };
+    }
   }
   return pool;
 }
@@ -97,6 +114,11 @@ dbPool.query("SELECT NOW()", (err, res) => {
 
 // Initialize database tables
 async function initDatabase() {
+  // Skip database initialization in production to avoid startup errors
+  if (process.env.NODE_ENV === 'production') {
+    console.log('Skipping automatic database initialization in production');
+    return;
+  }
   try {
     // Create users table if not exists
     await dbPool.query(`
@@ -179,14 +201,31 @@ const authenticateToken = (req, res, next) => {
 
 // Define API routes
 
-// Test route for checking deployment status
-app.get("/api/health", (req, res) => {
-  res.json({
+// Health check route
+app.get("/api/health", async (req, res) => {
+  const healthData = {
     status: "ok",
     message: "MeetNing Appointment AI API is running",
+    time: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
-    timestamp: new Date().toISOString(),
-  });
+  };
+  
+  // Test database connection
+  try {
+    const result = await dbPool.query('SELECT NOW() as now');
+    healthData.database = {
+      connected: true,
+      time: result.rows[0].now
+    };
+  } catch (error) {
+    healthData.status = "warning";
+    healthData.database = {
+      connected: false,
+      error: error.message
+    };
+  }
+  
+  res.json(healthData);
 });
 
 app.get("/api", (req, res) => {
@@ -737,7 +776,13 @@ app.use("/api/integration", integrationRoutes);
 app.use("/api/meetings", meetingRoutes);
 
 // Start server and initialize database
-app.listen(port, async () => {
-  console.log(`MeetNing Appointment AI API listening on port ${port}`);
-  await initDatabase();
-});
+// In production (Vercel), the server is started by the platform
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(port, async () => {
+    console.log(`MeetNing Appointment AI API listening on port ${port}`);
+    await initDatabase();
+  });
+} else {
+  // In production, just log that we're ready
+  console.log('MeetNing Appointment AI API ready for serverless invocation');
+}
