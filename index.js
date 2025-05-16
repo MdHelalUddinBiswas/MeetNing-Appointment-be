@@ -68,13 +68,16 @@ const pool = new Pool(poolConfig);
 
 // Test PostgreSQL connection - wrap in try/catch to prevent crashing
 try {
-pool.query("SELECT NOW()", (err, res) => {
-  if (err) {
-    console.error("Database connection error:", err.stack);
-  } else {
-    console.log("Database connected at:", res.rows[0].now);
-  }
-});
+  pool.query("SELECT NOW()", (err, res) => {
+    if (err) {
+      console.error("Database connection error:", err.stack);
+    } else {
+      console.log("Database connected at:", res.rows[0].now);
+    }
+  });
+} catch (error) {
+  console.error("Database connection test failed:", error.message);
+}
 
 // Initialize database tables
 async function initDatabase() {
