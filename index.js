@@ -720,8 +720,20 @@ const meetingRoutes = require("./routes/meeting.routes");
 app.use("/api/integration", integrationRoutes);
 app.use("/api/meetings", meetingRoutes);
 
-// Start server and initialize database
-app.listen(port, async () => {
-  console.log(`MeetNing Appointment AI API listening on port ${port}`);
-  await initDatabase();
-});
+// Check if running in serverless Vercel environment
+if (process.env.VERCEL) {
+  // For Vercel serverless - export the app
+  console.log('Exporting Express app for Vercel serverless deployment');
+  
+  // For serverless, initialize database on cold start
+  initDatabase().catch(err => console.error('Database initialization error in serverless:', err));
+  
+  // Export app for serverless
+  module.exports = app;
+} else {
+  // Start server and initialize database for traditional environment
+  app.listen(port, async () => {
+    console.log(`MeetNing Appointment AI API listening on port ${port}`);
+    await initDatabase();
+  });
+}
