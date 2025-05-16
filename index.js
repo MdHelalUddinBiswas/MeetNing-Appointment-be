@@ -65,48 +65,12 @@ if (process.env.DATABASE_URL) {
   console.log("Using local database connection");
 }
 
-// Create a new pool instance with the configuration
-let pool;
-
-// For Vercel serverless functions, initialize pool for each request
-function getPool() {
-  if (!pool) {
-    console.log('Creating new database connection pool');
-    try {
-      pool = new Pool(poolConfig);
-      
-      // Add event handlers for connection issues
-      pool.on('error', (err) => {
-        console.error('Unexpected database error:', err);
-        // Don't crash the server on connection errors
-      });
-    } catch (error) {
-      console.error('Failed to create pool:', error);
-      // Return a mock pool that logs errors instead of crashing
-      return {
-        query: async (...args) => {
-          console.error('DB Error: Pool creation failed, query attempted:', args[0]);
-          throw new Error('Database connection failed');
-        }
-      };
-    }
-  }
-  return pool;
-}
-
-// Use this instead of direct pool reference
-const dbPool = getPool();
+const pool = new Pool(poolConfig);
 
 // Test PostgreSQL connection
-dbPool.query("SELECT NOW()", (err, res) => {
+pool.query("SELECT NOW()", (err, res) => {
   if (err) {
     console.error("Database connection error:", err.stack);
-    console.error("Database connection details (sanitized):", {
-      host: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_HOST || "localhost",
-      database: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_NAME || "appointment_ai",
-      port: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_PORT || 5432,
-      ssl: process.env.DATABASE_URL ? true : false
-    });
   } else {
     console.log("Database connected at:", res.rows[0].now);
   }
@@ -114,14 +78,9 @@ dbPool.query("SELECT NOW()", (err, res) => {
 
 // Initialize database tables
 async function initDatabase() {
-  // Skip database initialization in production to avoid startup errors
-  if (process.env.NODE_ENV === 'production') {
-    console.log('Skipping automatic database initialization in production');
-    return;
-  }
   try {
     // Create users table if not exists
-    await dbPool.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -133,7 +92,7 @@ async function initDatabase() {
     `);
 
     // Create appointments table if not exists
-    await dbPool.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS appointments (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
@@ -149,7 +108,7 @@ async function initDatabase() {
     `);
 
     // Create calendars table if not exists
-    await dbPool.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS calendars (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
@@ -201,31 +160,14 @@ const authenticateToken = (req, res, next) => {
 
 // Define API routes
 
-// Health check route
-app.get("/api/health", async (req, res) => {
-  const healthData = {
+// Test route for checking deployment status
+app.get("/api/health", (req, res) => {
+  res.json({
     status: "ok",
     message: "MeetNing Appointment AI API is running",
-    time: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
-  };
-  
-  // Test database connection
-  try {
-    const result = await dbPool.query('SELECT NOW() as now');
-    healthData.database = {
-      connected: true,
-      time: result.rows[0].now
-    };
-  } catch (error) {
-    healthData.status = "warning";
-    healthData.database = {
-      connected: false,
-      error: error.message
-    };
-  }
-  
-  res.json(healthData);
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.get("/api", (req, res) => {
@@ -244,7 +186,7 @@ app.post("/api/auth/signup", async (req, res) => {
     const { name, email, password, timezone } = req.body;
 
     // Check if user already exists
-    const userCheck = await dbPool.query("SELECT * FROM users WHERE email = $1", [
+    const userCheck = await pool.query("SELECT * FROM users WHERE email = $1", [
       email,
     ]);
     if (userCheck.rows.length > 0) {
@@ -256,7 +198,7 @@ app.post("/api/auth/signup", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     // Create new user
-    const result = await dbPool.query(
+    const result = await pool.query(
       "INSERT INTO users (name, email, password, timezone) VALUES ($1, $2, $3, $4) RETURNING id, name, email, timezone",
       [name, email, hashedPassword, timezone || "UTC"]
     );
@@ -291,7 +233,7 @@ app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
 
     // Check if user exists
-    const result = await dbPool.query("SELECT * FROM users WHERE email = $1", [
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [
       email,
     ]);
     if (result.rows.length === 0) {
@@ -331,7 +273,7 @@ app.post("/api/auth/login", async (req, res) => {
 // Get user profile
 app.get("/api/auth/me", authenticateToken, async (req, res) => {
   try {
-    const result = await dbPool.query(
+    const result = await pool.query(
       "SELECT id, name, email, timezone FROM users WHERE id = $1",
       [req.user.id]
     );
@@ -362,7 +304,7 @@ app.get("/api/appointments", authenticateToken, async (req, res) => {
 
     query += " ORDER BY start_time ASC";
 
-    const result = await dbPool.query(query, queryParams);
+    const result = await pool.query(query, queryParams);
 
     res.json(result.rows);
   } catch (error) {
@@ -376,7 +318,7 @@ app.get("/api/appointments/:id", authenticateToken, async (req, res) => {
   try {
     const appointmentId = req.params.id;
 
-    const result = await dbPool.query(
+    const result = await pool.query(
       "SELECT * FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -464,7 +406,7 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
     console.log("Processed participants:", participantsJson);
 
     // Check if user exists in the database
-    const userCheck = await dbPool.query("SELECT id FROM users WHERE id = $1", [
+    const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [
       user_id,
     ]);
 
@@ -478,13 +420,13 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
       const defaultPassword = await bcrypt.hash("defaultPassword123", 10);
 
       // Insert a basic user record to satisfy the foreign key constraint with all required fields
-      await dbPool.query(
+      await pool.query(
         "INSERT INTO users (id, email, name, password, created_at) VALUES ($1, $2, $3, $4, NOW())",
         [user_id, email, name, defaultPassword]
       );
     }
 
-    const result = await dbPool.query(
+    const result = await pool.query(
       `INSERT INTO appointments 
         (user_id, title, description, start_time, end_time, location, participants, status) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
@@ -531,7 +473,7 @@ app.put("/api/appointments/:id", authenticateToken, async (req, res) => {
     } = req.body;
 
     // Check if appointment exists and belongs to user
-    const checkResult = await dbPool.query(
+    const checkResult = await pool.query(
       "SELECT * FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -638,7 +580,7 @@ app.put("/api/appointments/:id", authenticateToken, async (req, res) => {
       RETURNING *
     `;
 
-    const result = await dbPool.query(query, queryParams);
+    const result = await pool.query(query, queryParams);
 
     res.json(result.rows[0]);
   } catch (error) {
@@ -653,7 +595,7 @@ app.delete("/api/appointments/:id", authenticateToken, async (req, res) => {
     const appointmentId = req.params.id;
 
     // Check if appointment exists and belongs to user
-    const checkResult = await dbPool.query(
+    const checkResult = await pool.query(
       "SELECT * FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -665,7 +607,7 @@ app.delete("/api/appointments/:id", authenticateToken, async (req, res) => {
     }
 
     // Delete appointment
-    await dbPool.query(
+    await pool.query(
       "DELETE FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -710,7 +652,7 @@ app.put("/api/auth/profile", authenticateToken, async (req, res) => {
       RETURNING id, name, email, timezone
     `;
 
-    const result = await dbPool.query(query, queryParams);
+    const result = await pool.query(query, queryParams);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
@@ -736,7 +678,7 @@ app.post("/api/calendars/connect", authenticateToken, async (req, res) => {
     }
 
     // Insert new calendar connection
-    const result = await dbPool.query(
+    const result = await pool.query(
       `INSERT INTO calendars 
         (user_id, name, provider, access_token, refresh_token, token_expiry) 
        VALUES ($1, $2, $3, $4, $5, $6) 
@@ -754,7 +696,7 @@ app.post("/api/calendars/connect", authenticateToken, async (req, res) => {
 // Get user's calendars
 app.get("/api/calendars", authenticateToken, async (req, res) => {
   try {
-    const result = await dbPool.query(
+    const result = await pool.query(
       "SELECT id, name, provider, description FROM calendars WHERE user_id = $1",
       [req.user.id]
     );
@@ -776,13 +718,7 @@ app.use("/api/integration", integrationRoutes);
 app.use("/api/meetings", meetingRoutes);
 
 // Start server and initialize database
-// In production (Vercel), the server is started by the platform
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(port, async () => {
-    console.log(`MeetNing Appointment AI API listening on port ${port}`);
-    await initDatabase();
-  });
-} else {
-  // In production, just log that we're ready
-  console.log('MeetNing Appointment AI API ready for serverless invocation');
-}
+app.listen(port, async () => {
+  console.log(`MeetNing Appointment AI API listening on port ${port}`);
+  await initDatabase();
+});
