@@ -12,88 +12,84 @@ const port = process.env.PORT || 8000;
 // Middleware
 // Determine allowed origins based on environment
 const allowedOrigins = [
-  'http://localhost:3000',                            // Local frontend
-  'http://localhost:8000',                            // Local backend
-  'https://meet-ning-appointment-fe-2bci.vercel.app', // Production frontend
-  'https://meet-ning-appointment-be.vercel.app'       // Production backend
+  "http://localhost:3000", // Local frontend
+  "http://localhost:8000", // Local backend
+  "https://meet-ning-appointment-fe-2bci.vercel.app", // Production frontend
+  "https://meet-ning-appointment-be.vercel.app", // Production backend
 ];
 
 // CORS configuration
-app.use(cors({
-  origin: function(origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, etc)
-    if (!origin) return callback(null, true);
-    
-    // Check if the origin is in the allowed list
-    if (allowedOrigins.indexOf(origin) === -1) {
-      console.log('CORS request from unauthorized origin:', origin);
-      // For security in production, you might want to restrict this
-      // For now allowing all origins for easier development and testing
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, curl, etc)
+      if (!origin) return callback(null, true);
+
+      // Check if the origin is in the allowed list
+      if (allowedOrigins.indexOf(origin) === -1) {
+        console.log("CORS request from unauthorized origin:", origin);
+        // For security in production, you might want to restrict this
+        // For now allowing all origins for easier development and testing
+        return callback(null, true);
+      }
       return callback(null, true);
-    }
-    return callback(null, true);
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "x-auth-token"],
+  })
+);
 app.use(express.json());
 
 // PostgreSQL connection setup
 let poolConfig;
-let pool;
 
-try {
-  if (process.env.DATABASE_URL) {
-    // For production (Neon, Supabase, etc)
-    poolConfig = {
-      connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false,
-      },
-      // Add connection limits appropriate for serverless
-      max: 5,                   // Maximum number of clients in the pool (lower for serverless)
-      idleTimeoutMillis: 30000, // How long a client is allowed to remain idle before being closed
-      connectionTimeoutMillis: 10000, // Increased timeout for connection
-      statement_timeout: 10000  // Timeout for statements
-    };
-    console.log('Using production database connection with URL:', 
-      process.env.DATABASE_URL ? 
-      process.env.DATABASE_URL.substring(0, process.env.DATABASE_URL.indexOf('@')) + '...' : 
-      'undefined');
-  } else {
-    // For local development
-    poolConfig = {
-      user: process.env.DB_USER || "postgres",
-      host: process.env.DB_HOST || "localhost",
-      database: process.env.DB_NAME || "appointment_ai",
-      password: process.env.DB_PASSWORD || "postgres",
-      port: process.env.DB_PORT || 5432,
-    };
-    console.log('Using local database connection');
-  }
-
-  // Create the pool
-  pool = new Pool(poolConfig);
-  
-  // Add error handler
-  pool.on('error', (err) => {
-    console.error('Unexpected error on idle client', err);
-  });
-  
-} catch (error) {
-  console.error('Failed to initialize database pool:', error);
-  // Create an empty pool to avoid crashes
-  pool = {
-    query: () => Promise.reject(new Error('Database connection not available')),
-    on: () => {}
+if (process.env.DATABASE_URL) {
+  // For production (Neon, Supabase, etc)
+  poolConfig = {
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+      rejectUnauthorized: false,
+    },
   };
+  console.log("Using production database connection");
+} else {
+  // For local development
+  poolConfig = {
+    user: process.env.DB_USER || "postgres",
+    host: process.env.DB_HOST || "localhost",
+    database: process.env.DB_NAME || "appointment_ai",
+    password: process.env.DB_PASSWORD || "postgres",
+    port: process.env.DB_PORT || 5432,
+  };
+  console.log("Using local database connection");
 }
 
+// Create a new pool instance with the configuration
+let pool;
+
+// For Vercel serverless functions, initialize pool for each request
+function getPool() {
+  if (!pool) {
+    console.log('Creating new database connection pool');
+    pool = new Pool(poolConfig);
+  }
+  return pool;
+}
+
+// Use this instead of direct pool reference
+const dbPool = getPool();
+
 // Test PostgreSQL connection
-pool.query("SELECT NOW()", (err, res) => {
+dbPool.query("SELECT NOW()", (err, res) => {
   if (err) {
     console.error("Database connection error:", err.stack);
+    console.error("Database connection details (sanitized):", {
+      host: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_HOST || "localhost",
+      database: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_NAME || "appointment_ai",
+      port: process.env.DATABASE_URL ? "[From DATABASE_URL]" : process.env.DB_PORT || 5432,
+      ssl: process.env.DATABASE_URL ? true : false
+    });
   } else {
     console.log("Database connected at:", res.rows[0].now);
   }
@@ -103,7 +99,7 @@ pool.query("SELECT NOW()", (err, res) => {
 async function initDatabase() {
   try {
     // Create users table if not exists
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -115,7 +111,7 @@ async function initDatabase() {
     `);
 
     // Create appointments table if not exists
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS appointments (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
@@ -131,7 +127,7 @@ async function initDatabase() {
     `);
 
     // Create calendars table if not exists
-    await pool.query(`
+    await dbPool.query(`
       CREATE TABLE IF NOT EXISTS calendars (
         id SERIAL PRIMARY KEY,
         user_id INTEGER REFERENCES users(id),
@@ -183,61 +179,14 @@ const authenticateToken = (req, res, next) => {
 
 // Define API routes
 
-// Enhanced health endpoint for better diagnostics
-app.get("/api/health", async (req, res) => {
-  let dbStatus = "unknown";
-  let dbError = null;
-  
-  // Test database connection
-  try {
-    const dbResult = await pool.query("SELECT NOW() as time").timeout(5000);
-    dbStatus = "connected";
-    
-    // Return comprehensive health information
-    res.json({ 
-      status: "ok", 
-      message: "MeetNing Appointment AI API is running",
-      environment: process.env.NODE_ENV || 'development',
-      database: {
-        status: dbStatus,
-        time: dbResult.rows[0]?.time || new Date().toISOString()
-      },
-      server: {
-        timestamp: new Date().toISOString(),
-        nodejs: process.version,
-        memory: process.memoryUsage().heapUsed / 1024 / 1024 + ' MB'
-      },
-      config: {
-        database_url_set: !!process.env.DATABASE_URL,
-        jwt_secret_set: !!process.env.JWT_SECRET,
-        port: process.env.PORT || 8000
-      }
-    });
-  } catch (error) {
-    dbStatus = "error";
-    dbError = error.message;
-    
-    // Still return a 200 status but include error info
-    res.json({ 
-      status: "warning", 
-      message: "API is running but database connection has issues",
-      environment: process.env.NODE_ENV || 'development',
-      database: {
-        status: dbStatus,
-        error: dbError
-      },
-      server: {
-        timestamp: new Date().toISOString(),
-        nodejs: process.version,
-        memory: process.memoryUsage().heapUsed / 1024 / 1024 + ' MB'
-      },
-      config: {
-        database_url_set: !!process.env.DATABASE_URL,
-        jwt_secret_set: !!process.env.JWT_SECRET,
-        port: process.env.PORT || 8000
-      }
-    });
-  }
+// Test route for checking deployment status
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "ok",
+    message: "MeetNing Appointment AI API is running",
+    environment: process.env.NODE_ENV || "development",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.get("/api", (req, res) => {
@@ -256,7 +205,7 @@ app.post("/api/auth/signup", async (req, res) => {
     const { name, email, password, timezone } = req.body;
 
     // Check if user already exists
-    const userCheck = await pool.query("SELECT * FROM users WHERE email = $1", [
+    const userCheck = await dbPool.query("SELECT * FROM users WHERE email = $1", [
       email,
     ]);
     if (userCheck.rows.length > 0) {
@@ -268,7 +217,7 @@ app.post("/api/auth/signup", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     // Create new user
-    const result = await pool.query(
+    const result = await dbPool.query(
       "INSERT INTO users (name, email, password, timezone) VALUES ($1, $2, $3, $4) RETURNING id, name, email, timezone",
       [name, email, hashedPassword, timezone || "UTC"]
     );
@@ -303,7 +252,7 @@ app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
 
     // Check if user exists
-    const result = await pool.query("SELECT * FROM users WHERE email = $1", [
+    const result = await dbPool.query("SELECT * FROM users WHERE email = $1", [
       email,
     ]);
     if (result.rows.length === 0) {
@@ -343,7 +292,7 @@ app.post("/api/auth/login", async (req, res) => {
 // Get user profile
 app.get("/api/auth/me", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await dbPool.query(
       "SELECT id, name, email, timezone FROM users WHERE id = $1",
       [req.user.id]
     );
@@ -374,7 +323,7 @@ app.get("/api/appointments", authenticateToken, async (req, res) => {
 
     query += " ORDER BY start_time ASC";
 
-    const result = await pool.query(query, queryParams);
+    const result = await dbPool.query(query, queryParams);
 
     res.json(result.rows);
   } catch (error) {
@@ -388,7 +337,7 @@ app.get("/api/appointments/:id", authenticateToken, async (req, res) => {
   try {
     const appointmentId = req.params.id;
 
-    const result = await pool.query(
+    const result = await dbPool.query(
       "SELECT * FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -476,7 +425,7 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
     console.log("Processed participants:", participantsJson);
 
     // Check if user exists in the database
-    const userCheck = await pool.query("SELECT id FROM users WHERE id = $1", [
+    const userCheck = await dbPool.query("SELECT id FROM users WHERE id = $1", [
       user_id,
     ]);
 
@@ -490,13 +439,13 @@ app.post("/api/appointments", authenticateToken, async (req, res) => {
       const defaultPassword = await bcrypt.hash("defaultPassword123", 10);
 
       // Insert a basic user record to satisfy the foreign key constraint with all required fields
-      await pool.query(
+      await dbPool.query(
         "INSERT INTO users (id, email, name, password, created_at) VALUES ($1, $2, $3, $4, NOW())",
         [user_id, email, name, defaultPassword]
       );
     }
 
-    const result = await pool.query(
+    const result = await dbPool.query(
       `INSERT INTO appointments 
         (user_id, title, description, start_time, end_time, location, participants, status) 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
@@ -543,7 +492,7 @@ app.put("/api/appointments/:id", authenticateToken, async (req, res) => {
     } = req.body;
 
     // Check if appointment exists and belongs to user
-    const checkResult = await pool.query(
+    const checkResult = await dbPool.query(
       "SELECT * FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -650,7 +599,7 @@ app.put("/api/appointments/:id", authenticateToken, async (req, res) => {
       RETURNING *
     `;
 
-    const result = await pool.query(query, queryParams);
+    const result = await dbPool.query(query, queryParams);
 
     res.json(result.rows[0]);
   } catch (error) {
@@ -665,7 +614,7 @@ app.delete("/api/appointments/:id", authenticateToken, async (req, res) => {
     const appointmentId = req.params.id;
 
     // Check if appointment exists and belongs to user
-    const checkResult = await pool.query(
+    const checkResult = await dbPool.query(
       "SELECT * FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -677,7 +626,7 @@ app.delete("/api/appointments/:id", authenticateToken, async (req, res) => {
     }
 
     // Delete appointment
-    await pool.query(
+    await dbPool.query(
       "DELETE FROM appointments WHERE id = $1 AND user_id = $2",
       [appointmentId, req.user.id]
     );
@@ -722,7 +671,7 @@ app.put("/api/auth/profile", authenticateToken, async (req, res) => {
       RETURNING id, name, email, timezone
     `;
 
-    const result = await pool.query(query, queryParams);
+    const result = await dbPool.query(query, queryParams);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
@@ -748,7 +697,7 @@ app.post("/api/calendars/connect", authenticateToken, async (req, res) => {
     }
 
     // Insert new calendar connection
-    const result = await pool.query(
+    const result = await dbPool.query(
       `INSERT INTO calendars 
         (user_id, name, provider, access_token, refresh_token, token_expiry) 
        VALUES ($1, $2, $3, $4, $5, $6) 
@@ -766,7 +715,7 @@ app.post("/api/calendars/connect", authenticateToken, async (req, res) => {
 // Get user's calendars
 app.get("/api/calendars", authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await dbPool.query(
       "SELECT id, name, provider, description FROM calendars WHERE user_id = $1",
       [req.user.id]
     );
@@ -779,61 +728,16 @@ app.get("/api/calendars", authenticateToken, async (req, res) => {
 });
 
 // Create a Google Meet link
-// Import routes with error handling
-let integrationRoutes;
-let meetingRoutes;
+// Import routes
+const integrationRoutes = require("./routes/integration.routes");
+const meetingRoutes = require("./routes/meeting.routes");
 
-try {
-  integrationRoutes = require("./routes/integration.routes");
-  // Apply integration routes if available
-  app.use("/api/integration", integrationRoutes);
-  console.log('Integration routes loaded successfully');
-} catch (error) {
-  console.log('Integration routes not available:', error.message);
-  // Fallback route for integration endpoints
-  app.use("/api/integration", (req, res) => {
-    res.status(501).json({ message: "Integration functionality not available" });
-  });
-}
+// Apply integration and meeting routes
+app.use("/api/integration", integrationRoutes);
+app.use("/api/meetings", meetingRoutes);
 
-try {
-  meetingRoutes = require("./routes/meeting.routes");
-  // Apply meeting routes if available
-  app.use("/api/meetings", meetingRoutes);
-  console.log('Meeting routes loaded successfully');
-} catch (error) {
-  console.log('Meeting routes not available:', error.message);
-  // Fallback route for meeting endpoints
-  app.use("/api/meetings", (req, res) => {
-    res.status(501).json({ message: "Meeting functionality not available" });
-  });
-}
-
-// Initialize database on startup
-async function safeInitDatabase() {
-  try {
-    if (!pool.query || typeof pool.query !== 'function') {
-      console.error('Database pool not properly initialized, skipping table creation');
-      return;
-    }
-    
-    await initDatabase();
-    console.log('Database tables initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize database:', error);
-    // Don't crash the server if database initialization fails
-  }
-}
-
-// Call initialization with a small delay to ensure everything is loaded
-setTimeout(safeInitDatabase, 1000);
-
-// For local development
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(port, () => {
-    console.log(`MeetNing Appointment AI API listening on port ${port}`);
-  });
-}
-
-// Export the Express app for serverless environments
-module.exports = app;
+// Start server and initialize database
+app.listen(port, async () => {
+  console.log(`MeetNing Appointment AI API listening on port ${port}`);
+  await initDatabase();
+});
