@@ -16,6 +16,9 @@ const allowedOrigins = [
   "http://localhost:8000", // Local backend
   "https://meet-ning-appointment-fe-2bci.vercel.app", // Production frontend
   "https://meet-ning-appointment-be.vercel.app", // Production backend
+  "https://meet-ning-appointment-fe.vercel.app", // Production frontend (alternate)
+  "https://meet-ning-fe.vercel.app", // Short domain if used
+  "https://meetning.vercel.app" // Short domain if used
 ];
 
 // CORS configuration
