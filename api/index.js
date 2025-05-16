@@ -1,6 +1,10 @@
-// Simple root API handler for Vercel
+// Root API handler for Vercel with CORS support
+const corsHandler = require('./_cors');
 
 module.exports = (req, res) => {
+  // Handle CORS
+  if (corsHandler(req, res)) return;
+
   res.status(200).json({
     message: 'Welcome to the MeetNing Appointment AI API',
     version: '1.0.0',
@@ -8,7 +12,9 @@ module.exports = (req, res) => {
     time: new Date().toISOString(),
     endpoints: [
       '/api/health',
-      '/api/ping'
+      '/api/ping',
+      '/api/auth/login',
+      '/api/auth/signup'
     ]
   });
 };
