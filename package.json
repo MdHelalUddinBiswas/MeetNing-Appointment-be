@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "build": "echo \"Build completed\" && npm install",
-    "vercel-build": "prisma generate && echo \"Vercel build completed\""
+    "build": "npm install",
+    "vercel-build": "echo \"Vercel build started\" && prisma generate && echo \"Vercel build completed\""
   },
   "dependencies": {
     "@prisma/client": "^6.8.1",
