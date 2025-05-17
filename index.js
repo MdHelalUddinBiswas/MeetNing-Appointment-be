@@ -1,9 +1,11 @@
 const express = require("express");
-const { Pool } = require("pg");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 require("dotenv").config();
+
+// Import Prisma client
+const prisma = require('./prisma/client');
 
 const app = express();
 const port = process.env.PORT || 8000;
@@ -11,133 +13,75 @@ const port = process.env.PORT || 8000;
 app.use(cors());
 app.use(express.json());
 
-// // PostgreSQL connection setup
-// let poolConfig;
+// Test Prisma connection
+async function testConnection() {
+  try {
+    const dateTime = await prisma.$queryRaw`SELECT NOW()`;
+    console.log('Database connected at:', dateTime[0].now);
+    return true;
+  } catch (error) {
+    console.error('Database connection error:', error);
+    return false;
+  }
+}
 
-// if (process.env.DATABASE_URL) {
-//   // For production (Neon, Supabase, etc)
-//   poolConfig = {
-//     connectionString: process.env.DATABASE_URL,
-//     ssl: {
-//       rejectUnauthorized: false,
-//     },
-//   };
-//   console.log("Using production database connection");
-// }
+// Run Prisma migrations (tables already defined in schema.prisma)
+async function initDatabase() {
+  // With Prisma, we don't need to manually create tables
+  // The schema is defined in prisma/schema.prisma
+  // Tables are created automatically when running migrations
+  console.log('Using Prisma for database schema management');
+  return true;
+}
 
-// const pool = new Pool(poolConfig);
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+  // Get token from header - support multiple formats
+  let token = req.header("x-auth-token");
 
-// // Test PostgreSQL connection - wrap in try/catch to prevent crashing
-// try {
-//   pool.query("SELECT NOW()", (err, res) => {
-//     if (err) {
-//       console.error("Database connection error:", err.stack);
-//     } else {
-//       console.log("Database connected at:", res.rows[0].now);
-//     }
-//   });
-// } catch (error) {
-//   console.error("Database connection test failed:", error.message);
-// }
+  // Also check for Authorization header with Bearer token
+  const authHeader = req.header("Authorization");
+  if (!token && authHeader && authHeader.startsWith("Bearer ")) {
+    token = authHeader.split(" ")[1];
+    console.log("Using bearer token:", token.substring(0, 10) + "...");
+  }
 
-// // Initialize database tables
-// async function initDatabase() {
-//   try {
-//     // Create users table if not exists
-//     await pool.query(`
-//       CREATE TABLE IF NOT EXISTS users (
-//         id SERIAL PRIMARY KEY,
-//         name VARCHAR(100) NOT NULL,
-//         email VARCHAR(100) UNIQUE NOT NULL,
-//         password VARCHAR(100) NOT NULL,
-//         timezone VARCHAR(50),
-//         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-//       )
-//     `);
+  if (!token) {
+    return res.status(401).json({ message: "No token, authorization denied" });
+  }
 
-//     // Create appointments table if not exists
-//     await pool.query(`
-//       CREATE TABLE IF NOT EXISTS appointments (
-//         id SERIAL PRIMARY KEY,
-//         user_id INTEGER REFERENCES users(id),
-//         title VARCHAR(200) NOT NULL,
-//         description TEXT,
-//         start_time TIMESTAMP NOT NULL,
-//         end_time TIMESTAMP NOT NULL,
-//         location TEXT,
-//         participants JSONB,
-//         status VARCHAR(20) DEFAULT 'upcoming',
-//         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-//       )
-//     `);
+  try {
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || "your_jwt_secret"
+    );
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: "Token is not valid" });
+  }
+};
 
-//     // Create calendars table if not exists
-//     await pool.query(`
-//       CREATE TABLE IF NOT EXISTS calendars (
-//         id SERIAL PRIMARY KEY,
-//         user_id INTEGER REFERENCES users(id),
-//         name VARCHAR(100) NOT NULL,
-//         description TEXT,
-//         provider VARCHAR(50) NOT NULL,
-//         access_token TEXT,
-//         refresh_token TEXT,
-//         token_expiry TIMESTAMP,
-//         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-//       )
-//     `);
+// Test route for checking deployment status
+app.get("/api/health", async (req, res) => {
+  const dbStatus = await testConnection();
+  res.json({
+    status: "ok",
+    database: dbStatus ? "connected" : "error",
+    message: "MeetNing Appointment AI API is running",
+    environment: process.env.NODE_ENV || "development",
+    timestamp: new Date().toISOString(),
+  });
+});
 
-//     console.log("Database tables initialized successfully");
-//   } catch (error) {
-//     console.error("Database initialization error:", error);
-//   }
-// }
+app.get("/api", (req, res) => {
+  res.json({ message: "Welcome to the MeetNing Appointment AI API" });
+});
 
-// // Auth Middleware
-// const authenticateToken = (req, res, next) => {
-//   // Get token from header - support multiple formats
-//   let token = req.header("x-auth-token");
-
-//   // Also check for Authorization header with Bearer token
-//   const authHeader = req.header("Authorization");
-//   if (!token && authHeader && authHeader.startsWith("Bearer ")) {
-//     token = authHeader.split(" ")[1];
-//     console.log("Using bearer token:", token.substring(0, 10) + "...");
-//   }
-
-//   if (!token) {
-//     return res.status(401).json({ message: "No token, authorization denied" });
-//   }
-
-//   try {
-//     const decoded = jwt.verify(
-//       token,
-//       process.env.JWT_SECRET || "your_jwt_secret"
-//     );
-//     req.user = decoded;
-//     next();
-//   } catch (error) {
-//     return res.status(401).json({ message: "Token is not valid" });
-//   }
-// };
-
-// // Test route for checking deployment status
-// app.get("/api/health", (req, res) => {
-//   res.json({
-//     status: "ok",
-//     message: "MeetNing Appointment AI API is running",
-//     environment: process.env.NODE_ENV || "development",
-//     timestamp: new Date().toISOString(),
-//   });
-// });
-
-// app.get("/api", (req, res) => {
-//   res.json({ message: "Welcome to the MeetNing Appointment AI API" });
-// });
-
-// // Home route
-// app.get("/", (req, res) => {
-//   res.send("MeetNing Appointment AI API is running");
-// });
+// Home route
+app.get("/", (req, res) => {
+  res.send("MeetNing Appointment AI API is running");
+});
 
 // // Register a new user
 // app.post("/api/auth/signup", async (req, res) => {
@@ -672,6 +616,145 @@ app.use(express.json());
 // // Apply integration and meeting routes
 // app.use("/api/integration", integrationRoutes);
 // app.use("/api/meetings", meetingRoutes);
+
+// Register routes
+
+// Register a new user
+app.post("/api/auth/signup", async (req, res) => {
+  try {
+    const { name, email, password, timezone } = req.body;
+    
+    // Check if user exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email }
+    });
+    
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+    
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    // Create user
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+        timezone: timezone || "UTC",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        timezone: true,
+      },
+    });
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET || "your_jwt_secret",
+      { expiresIn: "24h" }
+    );
+    
+    res.status(201).json({
+      token,
+      user,
+    });
+  } catch (error) {
+    console.error("Signup error:", error);
+    res.status(500).json({ message: "Server error during registration" });
+  }
+});
+
+// Login user
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Find user
+    const user = await prisma.user.findUnique({
+      where: { email }
+    });
+    
+    if (!user) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+    
+    // Compare password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+    
+    // Generate JWT
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET || "your_jwt_secret",
+      { expiresIn: "24h" }
+    );
+    
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        timezone: user.timezone,
+      },
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ message: "Server error during login" });
+  }
+});
+
+// Get user profile
+app.get("/api/auth/me", authenticateToken, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        timezone: true,
+      },
+    });
+    
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    console.error("Profile error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Get all appointments for a user
+app.get("/api/appointments", authenticateToken, async (req, res) => {
+  try {
+    const { status } = req.query;
+    
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        userId: req.user.id,
+        ...(status ? { status } : {}),
+      },
+      orderBy: { startTime: 'asc' },
+    });
+    
+    res.json(appointments);
+  } catch (error) {
+    console.error("Get appointments error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
 // Start server and initialize database
 app.listen(port, async () => {
