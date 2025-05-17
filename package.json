@@ -3,15 +3,12 @@
   "version": "1.0.0",
   "description": "Express backend for MeetNing Appointment AI",
   "main": "index.js",
-"scripts": {
-    "build": "prisma generate && tsc",
-    "start": "node dist/index.js",
-    "dev": "nodemon --exec bun index.ts",
-    "postinstall": "prisma generate",
-    "prisma:generate": "prisma generate",
-    "vercel-build": "prisma generate && prisma migrate deploy && tsc",
-    "vercel-dev": "prisma generate && prisma migrate dev --name vercel-dev && tsc"
-},
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "build": "echo \"Build completed\" && npm install",
+    "vercel-build": "echo \"Vercel build completed\""
+  },
   "dependencies": {
     "@prisma/client": "^6.8.1",
     "@supabase/supabase-js": "^2.49.4",
